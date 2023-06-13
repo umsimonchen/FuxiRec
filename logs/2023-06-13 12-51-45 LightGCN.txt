@@ -1,0 +1,2 @@
+-------------------------------------------------------PARAMETER SETTING
+Embedding size: 50L2-Regularization:0.001Learning rate: 0.001Max epoch: 1Batch size: 2000Top K value: 
