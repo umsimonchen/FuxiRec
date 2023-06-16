@@ -6,10 +6,15 @@ Created on Fri May 26 17:01:38 2023
 """
 import os
 import numpy as np
-import tensorflow.compat.v1 as tf #written in 1.14, compatibility for tf1/tf2
-tf.disable_eager_execution()
-tf.set_random_seed(0)
-tf.reset_default_graph()
+try:
+    import tensorflow.compat.v1 as tf
+    tf.compat.v1.disable_eager_execution()
+    tf.compat.v1.set_random_seed(0)
+    tf.compat.v1.reset_default_graph()
+except:
+    import tensorflow as tf
+    tf.random.set_seed(0)
+    tf.reset_default_graph()
 import pandas as pd
 from scipy import sparse as sp
 import pickle
@@ -22,9 +27,9 @@ np.random.seed(0)
 
 class data(object):
     def __init__(self):
-        self.trainingSetRatio = 0.8
-        self.validationSetRatio = 0.
-        self.binarize = 1
+        self.trainingSetRatio = 0.7
+        self.validationSetRatio = 0.1
+        self.binarize = 2
         self.df = self.IO()
         self.train, self.val, self.test, self.num_users, self.num_items = self.splitSet()
         self.user2id, self.id2user, self.item2id, self.id2item = self.idxId()
@@ -34,7 +39,7 @@ class data(object):
         
     def IO(self):
         #binarize
-        df = pd.read_csv('datasets/LastFM/ratings.txt', sep='\t', header=None)
+        df = pd.read_csv('datasets/ml-100k/ratings.txt', sep='\t', header=None)
         df = df[df[2]>=self.binarize]
         #remove the extra useless attributes
         try:
@@ -46,9 +51,9 @@ class data(object):
     
     def splitSet(self):
         #split training/validation/test set
-        train = self.df.sample(frac=self.trainingSetRatio, random_state=0)
+        train = self.df.sample(frac=self.trainingSetRatio)
         rest = self.df.drop(train.index)
-        val = rest.sample(frac=self.validationSetRatio/(1-self.trainingSetRatio), random_state=0)
+        val = rest.sample(frac=self.validationSetRatio/(1-self.trainingSetRatio))
         test = rest.drop(val.index)
         
         #to numpy array
@@ -124,9 +129,11 @@ class evaluation(object):
         if prompt_name == 'validation':
             self.prompt_set = self.val
             self.prompt_profile = self.user_val_profile
+            print("Validation:")
         if prompt_name == 'test':
             self.prompt_set = self.test
-            self.prompt_profile = self.user_test_profile    
+            self.prompt_profile = self.user_test_profile   
+            print("Testing:")
         self.rec_list = {}
         self.hits = {}
         global_mean = self.train['users'].size
@@ -144,15 +151,14 @@ class evaluation(object):
             #self.rec_list[user] = [self.id2item[elem] for elem in candidates.argsort()[::-1][:self.top_k]] #much slower
             ids, scores = self.find_k_largest(self.top_k, candidates)
             self.rec_list[user] = [self.id2item[iid] for iid in ids]
+            #print(ids, scores)
             self.hits[user] = len(set(self.rec_list[user]).intersection(set(self.prompt_profile[user])))
         #metric calculation
-        currentMetrics = {'epoch': epoch, 'precision': self.precision(), 'recall': self.recall(), 'NDCG': self.NDCG()}
+        currentMetrics = {'epoch': epoch, 'precision': self.precision(), 'recall': self.recall(), 'MRR': self.mrr(), 'NDCG': self.NDCG()}
         currentMetrics['F1'] = self.F1(currentMetrics['precision'], currentMetrics['recall'])
         
         #update
-# =============================================================================
-#         if prompt_name = "val":
-# =============================================================================
+        #if prompt_name = "val"
         flag = 0
         for key in currentMetrics.keys():
             if currentMetrics[key] >= self.bestMetrics[key]:
@@ -161,18 +167,19 @@ class evaluation(object):
             self.bestMetrics = currentMetrics
         
         #output metrics
-        print("Evaluation:")
         print("------------------------------------------------")
         print("Current epoch: ", currentMetrics['epoch'])
         print("Precision: ", currentMetrics['precision'])
         print("Recall: ", currentMetrics['recall'])
         print("F1: ", currentMetrics['F1'])
+        print("MRR: ", currentMetrics['MRR'])
         print("NDCG: ", currentMetrics['NDCG'])
         print("------------------------------------------------")
         print("Best epoch: ", self.bestMetrics['epoch'])
         print("Precision: ", self.bestMetrics['precision'])
         print("Recall: ", self.bestMetrics['recall'])
         print("F1: ", self.bestMetrics['F1'])
+        print("MRR: ", self.bestMetrics['MRR'])
         print("NDCG: ", self.bestMetrics['NDCG'])
         print("------------------------------------------------")
         
@@ -199,6 +206,14 @@ class evaluation(object):
                 IDCG += 1.0 / np.log(n+2)
             NDCG += DCG / IDCG
         return NDCG / (i+1)
+    
+    def mrr(self):
+        mrr = 0
+        for i, user in enumerate(np.unique(self.prompt_set['users'])):
+            for n, item in enumerate(self.rec_list[user]):
+                if item in self.prompt_profile[user]:
+                    mrr += 1 / (n+1)
+        return mrr / (i+1)
     
     #optimized 
     def find_k_largest(self, K, candidates):
@@ -241,16 +256,16 @@ class LightGCN(data, evaluation):
         super(LightGCN, self).__init__()
         
         #general parameter
-        self.emb_size = 50
+        self.emb_size = 64
         self.reg = 0.001
         self.learning_rate = 0.001 
-        self.maxEpoch = 1
-        self.batch_size = 2000
+        self.maxEpoch = 100
+        self.batch_size = 512
         self.top_k = 10
         self.earlystop = 10
-        self.bestMetrics = {'epoch':0, 'precision':0, 'recall':0, 'F1':0, 'NDCG':0}
-        self.user_embeddings = tf.Variable(tf.truncated_normal(shape=[self.num_users, self.emb_size], stddev=0.005, seed=0), name='user_embeddings')
-        self.item_embeddings = tf.Variable(tf.truncated_normal(shape=[self.num_items, self.emb_size], stddev=0.005, seed=0), name='item_embeddings')
+        self.bestMetrics = {'epoch':0, 'precision':0, 'recall':0, 'F1':0, 'MRR':0, 'NDCG':0}
+        self.user_embeddings = tf.Variable(tf.truncated_normal(shape=[self.num_users, self.emb_size], stddev=0.005), name='user_embeddings')
+        self.item_embeddings = tf.Variable(tf.truncated_normal(shape=[self.num_items, self.emb_size], stddev=0.005), name='item_embeddings')
         
         #model specific parameter
         self.n_layers = 2
@@ -297,15 +312,16 @@ class LightGCN(data, evaluation):
         for epoch in range(self.maxEpoch):
             for n, batch in enumerate(self.onePosOneNegBatch()):
                 u, i, neg = batch
-                _, l, self.user, self.item = self.sess.run([train, rec_loss, self.user_embeddings, self.item_embeddings], feed_dict={self.u_idx: u, self.i_idx: i, self.neg_idx: neg})
+                #print(u_idx,i_idx)
+                _, l = self.sess.run([train, rec_loss], feed_dict={self.u_idx: u, self.i_idx: i, self.neg_idx: neg})
                 print("Training:", epoch+1, "Batch:", n+1, "Loss:", l)
             self.U, self.V = self.sess.run([self.multi_user_embeddings, self.multi_item_embeddings])
-            self.predictForRanking(prompt_name='test', epoch=epoch+1)
+            self.predictForRanking(prompt_name='validation', epoch=epoch+1)
             #early stop
             if epoch - self.bestMetrics['epoch'] == self.earlystop:
                 print("Early stop!!!")
                 break
-        #self.predictForRanking(name='test')
+        self.predictForRanking(prompt_name='test')
         
         #output logs
         filename = datetime.now().strftime("%Y-%m-%d %H-%M-%S ") + "LightGCN.txt"

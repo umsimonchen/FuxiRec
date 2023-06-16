@@ -1,0 +1,17 @@
+-----------------------------------------------------
+PARAMETER SETTING
+Embedding size: 50
+L2-Regularization:0.001
+Learning rate: 0.001
+Max epoch: 1
+Batch size: 2000
+Top K value: 10
+Early stop: 10
+Graph layer: 2
+-----------------------------------------------------
+epoch: 0
+precision: 0.1538871139510117
+recall: 0.11061519071602365
+MRR: 0.5942880808695508
+NDCG: 0.1871291194131692
+F1: 0.12871156249362609
